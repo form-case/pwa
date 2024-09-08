@@ -1,10 +1,8 @@
-<div class="text">
-	<h1>Subir Formulario y Modelo</h1>
-  <script id="main-script" defer type="module" src="/x/js/build/enketo-webform.js"></script>
-</div>
 <script lang="ts">
   import { onMount } from 'svelte';
   import { writable } from 'svelte/store';
+  import { enketoIdStore } from '../../stores/enketoStore'; // Para almacenar el enketoId en la tienda global
+  import { goto } from '$app/navigation'; // Para la navegación entre páginas
 
   // Estados
   let formFile: File | null = null;
@@ -12,6 +10,7 @@
   let formTitle: string | null = null;
   let loadedForms = writable<Array<{ title: string, enketoId: string }>>([]);
 
+  // Leer contenido de archivo
   function readFileContent(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -28,11 +27,13 @@
     });
   }
 
+  // Extraer título del formulario del contenido XML
   function extractFormTitle(xmlContent: string): string | null {
     const titleMatch = xmlContent.match(/id="form-title">([^<]+)</);
     return titleMatch ? titleMatch[1] : null;
   }
 
+  // Almacenar formulario y modelo en IndexedDB
   function storeInIndexedDB(formString: string, modelString: string, enketoId: string) {
     const request = indexedDB.open('enketo', 4);
 
@@ -58,8 +59,10 @@
         maxSize: 10000000,
         media: {}
       };
+      
       store.put(survey);
 
+      console.log('Formulario y modelo almacenados en IndexedDB:', survey);
       loadedForms.update((forms) => [...forms, { title: formTitle ?? 'Sin título', enketoId }]);
     };
 
@@ -68,6 +71,7 @@
     };
   }
 
+  // Cargar formularios almacenados desde IndexedDB
   function loadFormsFromIndexedDB() {
     const request = indexedDB.open('enketo', 4);
 
@@ -93,14 +97,17 @@
     };
   }
 
+  // Iniciar al montar el componente
   onMount(() => {
     loadFormsFromIndexedDB();
   });
 
+  // Manejo de cambios en los archivos
   function handleFormChange(event: Event) {
     const target = event.target as HTMLInputElement;
     if (target.files && target.files.length > 0) {
       formFile = target.files[0];
+      console.log('Archivo de formulario seleccionado:', formFile.name);
     }
   }
 
@@ -108,9 +115,11 @@
     const target = event.target as HTMLInputElement;
     if (target.files && target.files.length > 0) {
       modelFile = target.files[0];
+      console.log('Archivo de modelo seleccionado:', modelFile.name);
     }
   }
 
+  // Subir archivos a IndexedDB
   async function handleUpload() {
     if (!formFile || !modelFile) {
       alert('Por favor selecciona ambos archivos');
@@ -138,6 +147,12 @@
   function cleanString(input: string): string {
     return input.replace(/\\\\/g, '\\').replace(/\\"/g, '"').replace(/\\n/g, '\n').replace(/\\t/g, '\t');
   }
+
+  // Función para navegar y actualizar el enketoId en la tienda global
+  function handleNavigation(formId: string) {
+    enketoIdStore.set(formId); // Almacena el ID en la tienda
+    goto('/form'); // Navega a la página de /form
+  }
 </script>
 
 <style>
@@ -150,7 +165,7 @@
   .form-list {
     margin-top: 20px;
   }
-  .form-list button {
+  .form-list {
     margin-right: 10px;
     padding: 10px;
     background-color: #08c;
@@ -176,9 +191,12 @@
   <ul>
     {#each $loadedForms as form}
       <li>
-        <button class="form-list" on:click={() => window.location.href = `/form?id=${form.enketoId}`}>
+        <button class="form-list" on:click={() => {
+          enketoIdStore.set(form.enketoId);
+          goto('/form');
+        }}>
           Ir a {form.title} (ID: {form.enketoId})
-        </button>
+        </button>                    
       </li>
     {/each}
   </ul>
