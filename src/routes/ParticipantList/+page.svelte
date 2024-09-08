@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { goto } from '$app/navigation'; // Navigation in SvelteKit
-  let PouchDB;  // Declare PouchDB without importing at the top to avoid SSR issues
+  import { goto } from '$app/navigation';
+  let PouchDB;
 
   interface Participant {
     _id: string;
@@ -10,84 +10,130 @@
     avatarUrl?: string;
   }
 
+  interface Field {
+    label: string;
+    value: any;
+    hxl: string;
+  }
+
   let participants: Participant[] = [];
+  let allDocuments: any[] = [];
   let searchTerm = '';
   let loading = true;
   let db: any;
 
-  // Define the type of row and its doc structure
   interface Row {
     doc: {
       _id: string;
       jsonData: Record<string, any>;
-      files?: Array<{ name: string; blob: Blob }>;
+      files?: Array<{ name: string; item: Blob }>;
     };
   }
 
-  // Function to fetch participants from PouchDB
   const fetchParticipants = async () => {
     try {
       loading = true;
+      console.log('Iniciando fetch de participantes desde PouchDB...');
+      
       const allDocs = await db.allDocs({ include_docs: true });
+      console.log(`Total de documentos obtenidos: ${allDocs.rows.length}`);
 
       const participantData = await Promise.all(
-        allDocs.rows.map(async (row: any) => {
+        allDocs.rows.map(async (row: Row) => {
           const doc = row.doc;
+          console.log('Procesando documento:', doc._id);
 
-          if (!doc || !doc.jsonData || Object.keys(doc.jsonData).length === 0) {
+          if (!doc.jsonData || Object.keys(doc.jsonData).length === 0) {
+            console.warn(`Documento ${doc._id} no tiene jsonData o está vacío`);
             return null;
           }
 
           const jsonDataKey = Object.keys(doc.jsonData)[0];
           const jsonData = doc.jsonData[jsonDataKey];
+          console.log('jsonDataKey:', jsonDataKey);
+          console.log('jsonData:', jsonData);
 
+          // Buscando nombre del archivo del avatar
+          const avatarFileName = jsonData.image?.['#text'];
+          console.log('Nombre del archivo de avatar:', avatarFileName);
           let avatarUrl = null;
-          const avatarFileName = jsonData?.image?.['#text'];
 
           if (avatarFileName && Array.isArray(doc.files)) {
-            const avatarBlobEntry = doc.files.find((file: any) => file.name === avatarFileName);
-            if (avatarBlobEntry && avatarBlobEntry.blob instanceof Blob) {
-              avatarUrl = URL.createObjectURL(avatarBlobEntry.blob);
+            console.log('Buscando el archivo de avatar en los documentos...');
+            const avatarBlobEntry = doc.files.find(file => file.name === avatarFileName);
+
+            if (avatarBlobEntry && avatarBlobEntry.item instanceof Blob) {
+              console.log(`Archivo de avatar encontrado: ${avatarFileName}, creando URL...`);
+              avatarUrl = URL.createObjectURL(avatarBlobEntry.item);
+              console.log('URL generada para el avatar:', avatarUrl);
+            } else {
+              console.warn(`No se encontró un Blob válido para el archivo de avatar: ${avatarFileName}`);
             }
+          } else {
+            console.warn(`Nombre de archivo de avatar no encontrado o archivos no válidos para documento: ${doc._id}`);
           }
 
           return { ...doc, jsonData, avatarUrl };
         })
       );
 
-      participants = participantData.filter((p) => p !== null) as Participant[];
-    } catch (err) {
-      console.error('Error fetching participants from PouchDB:', err);
+      participants = participantData.filter((p): p is Participant => p !== null);
+      allDocuments = allDocs.rows.map((row: Row) => row.doc);
+      console.log('Participantes procesados:', participants);
     } finally {
       loading = false;
+      console.log('Fetch completado.');
     }
   };
 
-  // Load PouchDB and fetch data when the component is mounted
+  const getFieldsWithHXL = (data: Record<string, any>, fields: Field[] = []): Field[] => {
+    for (let key in data) {
+      if (typeof data[key] === 'object' && !Array.isArray(data[key])) {
+        if ('@_hxl' in data[key] && '#text' in data[key]) {
+          fields.push({ label: key, value: data[key]['#text'], hxl: data[key]['@_hxl'] });
+        } else {
+          getFieldsWithHXL(data[key], fields);
+        }
+      }
+    }
+    return fields;
+  };
+
+  const renderParticipantFields = (participant: Participant): string => {
+    let fields = getFieldsWithHXL(participant.jsonData);
+    fields = fields
+      .filter(field => !isNaN(Number(field.hxl)))
+      .sort((a, b) => parseInt(a.hxl) - parseInt(b.hxl))
+      .slice(0, 6);
+
+      return fields
+      .map(field => `<span class="field"><strong>${field.label}:</strong> ${field.value || 'No disponible'}</span>`)
+      .join('<hr class="divider" />'); // Añadir líneas divisorias entre los campos
+  };
+
   onMount(async () => {
     if (typeof window !== 'undefined') {
-      // Ensure PouchDB is only loaded on the client side
       const { default: PouchDBLib } = await import('pouchdb-browser');
-      PouchDB = PouchDBLib;
-      db = new PouchDB('enketodb');
-      fetchParticipants();
+      db = new PouchDBLib('enketodb');
+      console.log('PouchDB inicializado...');
+      await fetchParticipants();
     }
   });
 
-  // Filter participants based on search term
-  const filteredParticipants = () => {
+  const filteredParticipants = (): Participant[] => {
     return participants.filter(participant =>
       participant.name?.toLowerCase().includes(searchTerm.toLowerCase())
     );
   };
 
-  // Handle participant selection
   const handleSelectParticipant = (participant: Participant) => {
+    console.log('Participante seleccionado:', participant._id);
     goto(`/participant/${participant._id}`);
   };
 
   const handleAddParticipant = () => {
-    goto('/formulario');
+    console.log('Navegando para agregar nuevo participante');
+    goto('/form');
   };
 </script>
 
@@ -95,19 +141,17 @@
   .container {
     display: flex;
     flex-direction: column;
-    height: 100vh;
     width: 100%;
     overflow: hidden;
-    position: fixed;
+    position: relative;
   }
 
   .fixedTop {
-    width: 100%;
-    margin-top: 15px;
+    margin-top: 0px;
     z-index: 100;
-    background-color: white;
     padding: 1rem;
     box-shadow: 0px 2px 4px rgba(0, 0, 0, 0.1);
+    display: flex;
   }
 
   .content {
@@ -116,9 +160,43 @@
     padding: 1rem;
   }
 
+  .searchStyle {
+    padding: 10px;
+    border-radius: 8px;
+    border: 1px solid #eee4e4;
+    background-color: #f0ffff7d;
+    width: 70%;
+  }
+
+  .add-participant {
+  background-color: #1976D2;
+  color: white;
+  border: none;
+  border-radius: 50%;
+  width: 50px;
+  height: 50px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 24px;
+  bottom: 20px;
+  right: 20px;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+  margin-left: 10px;
+  z-index: 1000; /* Asegúrate de que esté por encima de otros elementos */
+}
+
+.add-participant:hover {
+  background-color: #0D47A1;
+}
+
+
   .avatarStyle {
-    width: 90px;
-    height: 90px;
+    width: 99px;
+    height: 99px;
+    object-fit: cover;
+    border-radius: 50%;
+    margin-right: 16px;
   }
 
   .cardStyle {
@@ -126,8 +204,38 @@
     border-radius: 12px;
     background-color: #f3f3f3;
     box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    padding-left: 1rem;
+    display: flex;
+    align-items: center;
+    border: 1px solid #ddd;
+    text-align: left;
     padding: 1rem;
+    font-size: smaller;
   }
+
+  .all-documents {
+    margin-top: 20px;
+    padding: 1rem;
+    background-color: #fff;
+    border: 1px solid #ddd;
+  }
+
+  .all-documents h3 {
+    margin-bottom: 1rem;
+  }
+
+  .all-documents ul {
+    list-style: none;
+    padding: 0;
+  }
+
+  .all-documents li {
+    margin-bottom: 1rem;
+    padding: 1rem;
+    background-color: #f3f3f3;
+    border-radius: 8px;
+  }
+
 </style>
 
 <div class="container">
@@ -138,7 +246,8 @@
       placeholder="Buscar Participante"
       class="searchStyle"
     />
-    <button on:click={handleAddParticipant}>Agregar Participante</button>
+    <button class="add-participant" on:click={handleAddParticipant}>+</button>
+
   </div>
 
   <div class="content">
@@ -146,17 +255,31 @@
       <p>Cargando...</p>
     {:else}
       {#each filteredParticipants() as participant}
-        <!-- Replace div with button for accessibility -->
         <button
           class="cardStyle"
           on:click={() => handleSelectParticipant(participant)}
           aria-label="Seleccionar participante"
           type="button"
         >
-          <img src={participant.avatarUrl} alt="avatar" class="avatarStyle" />
-          <p>{participant.name || 'No disponible'}</p>
+          <img src={participant.avatarUrl || '/default-avatar.png'} alt="avatar" class="avatarStyle" />
+          <div>
+            <!-- <p><strong>{participant.name || 'No disponible'}</strong></p> -->
+            {@html renderParticipantFields(participant)}
+          </div>
         </button>
       {/each}
     {/if}
   </div>
+</div>
+
+<div class="all-documents">
+  <h3>Todos los Documentos en PouchDB</h3>
+  <ul>
+    {#each allDocuments as doc}
+      <li>
+        <strong>ID:</strong> {doc._id} <br />
+        <strong>Datos:</strong> {JSON.stringify(doc)}
+      </li>
+    {/each}
+  </ul>
 </div>
