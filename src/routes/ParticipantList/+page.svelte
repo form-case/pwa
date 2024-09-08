@@ -164,8 +164,8 @@
     padding: 10px;
     border-radius: 8px;
     border: 1px solid #eee4e4;
-    background-color: #f0ffff7d;
-    width: 70%;
+    background-color: #fffffffc;
+    width: 80%;
   }
 
   .add-participant {
@@ -211,6 +211,7 @@
     text-align: left;
     padding: 1rem;
     font-size: smaller;
+    background-color: #ffffff8a;
   }
 
   .all-documents {
@@ -227,6 +228,7 @@
   .all-documents ul {
     list-style: none;
     padding: 0;
+    overflow: hidden;
   }
 
   .all-documents li {
