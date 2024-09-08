@@ -39,6 +39,8 @@
 	"type": "module",
 	"dependencies": {
 		"@sveltejs/adapter-static": "^3.0.4",
-		"pouchdb": "^9.0.0"
+		"events": "^3.3.0",
+		"pouchdb": "^9.0.0",
+		"pouchdb-browser": "^9.0.0"
 	}
 }

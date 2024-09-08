@@ -23,7 +23,7 @@
   
   <style>
     main {
-      padding: 2rem;
+      padding: rem;
     }
     h2 {
       font-size: 2rem;
