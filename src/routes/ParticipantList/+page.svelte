@@ -26,7 +26,12 @@
     doc: {
       _id: string;
       jsonData: Record<string, any>;
-      files?: Array<{ name: string; item: Blob }>;
+      _attachments?: {
+        [filename: string]: {
+          content_type: string;
+          data: Blob;
+        };
+      };
     };
   }
 
@@ -34,8 +39,9 @@
     try {
       loading = true;
       console.log('Iniciando fetch de participantes desde PouchDB...');
-      
-      const allDocs = await db.allDocs({ include_docs: true });
+
+      // Incluir adjuntos en la solicitud y obtenerlos como Blobs
+      const allDocs = await db.allDocs({ include_docs: true, attachments: true, binary: true });
       console.log(`Total de documentos obtenidos: ${allDocs.rows.length}`);
 
       const participantData = await Promise.all(
@@ -58,19 +64,19 @@
           console.log('Nombre del archivo de avatar:', avatarFileName);
           let avatarUrl = null;
 
-          if (avatarFileName && Array.isArray(doc.files)) {
-            console.log('Buscando el archivo de avatar en los documentos...');
-            const avatarBlobEntry = doc.files.find(file => file.name === avatarFileName);
+          if (avatarFileName && doc._attachments && doc._attachments[avatarFileName]) {
+            console.log('Buscando el archivo de avatar en los adjuntos...');
+            const avatarAttachment = doc._attachments[avatarFileName];
 
-            if (avatarBlobEntry && avatarBlobEntry.item instanceof Blob) {
+            if (avatarAttachment && avatarAttachment.data instanceof Blob) {
               console.log(`Archivo de avatar encontrado: ${avatarFileName}, creando URL...`);
-              avatarUrl = URL.createObjectURL(avatarBlobEntry.item);
+              avatarUrl = URL.createObjectURL(avatarAttachment.data);
               console.log('URL generada para el avatar:', avatarUrl);
             } else {
               console.warn(`No se encontró un Blob válido para el archivo de avatar: ${avatarFileName}`);
             }
           } else {
-            console.warn(`Nombre de archivo de avatar no encontrado o archivos no válidos para documento: ${doc._id}`);
+            console.warn(`Nombre de archivo de avatar no encontrado o adjuntos no válidos para documento: ${doc._id}`);
           }
 
           return { ...doc, jsonData, avatarUrl };
@@ -106,7 +112,7 @@
       .sort((a, b) => parseInt(a.hxl) - parseInt(b.hxl))
       .slice(0, 6);
 
-      return fields
+    return fields
       .map(field => `<span class="field"><strong>${field.label}:</strong> ${field.value || 'No disponible'}</span>`)
       .join('<hr class="divider" />'); // Añadir líneas divisorias entre los campos
   };
@@ -249,7 +255,6 @@
       class="searchStyle"
     />
     <button class="add-participant" on:click={handleAddParticipant}>+</button>
-
   </div>
 
   <div class="content">
@@ -265,7 +270,6 @@
         >
           <img src={participant.avatarUrl || '/default-avatar.png'} alt="avatar" class="avatarStyle" />
           <div>
-            <!-- <p><strong>{participant.name || 'No disponible'}</strong></p> -->
             {@html renderParticipantFields(participant)}
           </div>
         </button>
