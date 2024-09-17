@@ -17,10 +17,12 @@
 		"@fontsource/fira-mono": "^5.0.0",
 		"@neoconfetti/svelte": "^2.0.0",
 		"@playwright/test": "^1.28.1",
+		"@rollup/plugin-commonjs": "^26.0.1",
 		"@sveltejs/adapter-auto": "^3.0.0",
 		"@sveltejs/kit": "^2.0.0",
 		"@sveltejs/vite-plugin-svelte": "^3.0.0",
 		"@types/eslint": "^9.6.0",
+		"@types/lodash": "^4.17.7",
 		"@types/pouchdb": "^6.4.2",
 		"eslint": "^9.0.0",
 		"eslint-config-prettier": "^9.1.0",
@@ -40,7 +42,9 @@
 	"dependencies": {
 		"@sveltejs/adapter-static": "^3.0.4",
 		"events": "^3.3.0",
+		"lodash": "^4.17.21",
 		"pouchdb": "^9.0.0",
-		"pouchdb-browser": "^9.0.0"
+		"pouchdb-browser": "^9.0.0",
+		"pouchdb-find": "^9.0.0"
 	}
 }

@@ -2,12 +2,13 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   let PouchDB;
-
+  
   interface Participant {
     _id: string;
     name?: string;
     jsonData: Record<string, any>;
     avatarUrl?: string;
+    searchTextTokens: string[];
   }
 
   interface Field {
@@ -18,14 +19,17 @@
 
   let participants: Participant[] = [];
   let allDocuments: any[] = [];
+  let filteredParticipants: Participant[] = [];
   let searchTerm = '';
   let loading = true;
   let db: any;
+  let client = false; // Bandera para saber si estamos en el cliente
 
   interface Row {
     doc: {
       _id: string;
       jsonData: Record<string, any>;
+      searchTextTokens: string[];
       _attachments?: {
         [filename: string]: {
           content_type: string;
@@ -36,18 +40,18 @@
   }
 
   const fetchParticipants = async () => {
+    if (!db) return; // Evitar ejecución si db no está inicializado
+
     try {
       loading = true;
       console.log('Iniciando fetch de participantes desde PouchDB...');
 
-      // Incluir adjuntos en la solicitud y obtenerlos como Blobs
       const allDocs = await db.allDocs({ include_docs: true, attachments: true, binary: true });
       console.log(`Total de documentos obtenidos: ${allDocs.rows.length}`);
 
       const participantData = await Promise.all(
         allDocs.rows.map(async (row: Row) => {
           const doc = row.doc;
-          console.log('Procesando documento:', doc._id);
 
           if (!doc.jsonData || Object.keys(doc.jsonData).length === 0) {
             console.warn(`Documento ${doc._id} no tiene jsonData o está vacío`);
@@ -56,41 +60,66 @@
 
           const jsonDataKey = Object.keys(doc.jsonData)[0];
           const jsonData = doc.jsonData[jsonDataKey];
-          console.log('jsonDataKey:', jsonDataKey);
-          console.log('jsonData:', jsonData);
 
-          // Buscando nombre del archivo del avatar
+          // Asegurarnos de que searchTextTokens existe
+          const searchTextTokens = doc.searchTextTokens || [];
+
+          // Procesar otros datos necesarios, como avatarUrl y cualquier otro campo
           const avatarFileName = jsonData.image?.['#text'];
-          console.log('Nombre del archivo de avatar:', avatarFileName);
           let avatarUrl = null;
 
           if (avatarFileName && doc._attachments && doc._attachments[avatarFileName]) {
-            console.log('Buscando el archivo de avatar en los adjuntos...');
             const avatarAttachment = doc._attachments[avatarFileName];
 
             if (avatarAttachment && avatarAttachment.data instanceof Blob) {
-              console.log(`Archivo de avatar encontrado: ${avatarFileName}, creando URL...`);
               avatarUrl = URL.createObjectURL(avatarAttachment.data);
-              console.log('URL generada para el avatar:', avatarUrl);
-            } else {
-              console.warn(`No se encontró un Blob válido para el archivo de avatar: ${avatarFileName}`);
             }
-          } else {
-            console.warn(`Nombre de archivo de avatar no encontrado o adjuntos no válidos para documento: ${doc._id}`);
           }
 
-          return { ...doc, jsonData, avatarUrl };
+          return { ...doc, jsonData, avatarUrl, searchTextTokens };
         })
       );
 
       participants = participantData.filter((p): p is Participant => p !== null);
       allDocuments = allDocs.rows.map((row: Row) => row.doc);
       console.log('Participantes procesados:', participants);
+
+      // Actualizar los participantes filtrados inicialmente
+      filteredParticipants = participants;
     } finally {
       loading = false;
       console.log('Fetch completado.');
     }
   };
+
+  const searchParticipants = (): Participant[] => {
+    if (!searchTerm.trim()) {
+      return participants;
+    }
+
+    const lowerCaseTerm = searchTerm.toLowerCase();
+    const tokens = lowerCaseTerm.split(/\s+/);
+
+    return participants.filter(participant =>
+      tokens.every(token =>
+        participant.searchTextTokens.some(t => t.toLowerCase().includes(token))
+      )
+    );
+  };
+
+  $: if (client && typeof searchTerm === 'string') {
+    filteredParticipants = searchParticipants();
+  }
+
+  onMount(async () => {
+    client = true; // Estamos en el cliente
+
+    const { default: PouchDBLib } = await import('pouchdb-browser');
+    db = new PouchDBLib('enketodb');
+    console.log('PouchDB inicializado...');
+
+    await fetchParticipants();
+  });
 
   const getFieldsWithHXL = (data: Record<string, any>, fields: Field[] = []): Field[] => {
     for (let key in data) {
@@ -117,21 +146,6 @@
       .join('<hr class="divider" />'); // Añadir líneas divisorias entre los campos
   };
 
-  onMount(async () => {
-    if (typeof window !== 'undefined') {
-      const { default: PouchDBLib } = await import('pouchdb-browser');
-      db = new PouchDBLib('enketodb');
-      console.log('PouchDB inicializado...');
-      await fetchParticipants();
-    }
-  });
-
-  const filteredParticipants = (): Participant[] => {
-    return participants.filter(participant =>
-      participant.name?.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-  };
-
   const handleSelectParticipant = (participant: Participant) => {
     console.log('Participante seleccionado:', participant._id);
     goto(`/participant/${participant._id}`);
@@ -142,6 +156,12 @@
     goto('/form');
   };
 </script>
+
+<!-- Tu código HTML y estilos permanecen igual -->
+
+<!-- Ajusta el #each para usar filteredParticipants -->
+
+
 
 <style>
   .container {
@@ -261,7 +281,7 @@
     {#if loading}
       <p>Cargando...</p>
     {:else}
-      {#each filteredParticipants() as participant}
+      {#each filteredParticipants as participant}
         <button
           class="cardStyle"
           on:click={() => handleSelectParticipant(participant)}
