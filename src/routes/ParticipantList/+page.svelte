@@ -24,6 +24,34 @@
   let allDocuments: any[] = [];
   const avatarUrls = new Map<string, string>();
 
+
+  const generateAvatarUrl = (
+  jsonData: any,
+  docId: string,
+  attachments: any
+  ): string | null => {
+  if (!client) return null;
+
+  const avatarFileName = jsonData.image?.['#text'];
+  if (avatarFileName && attachments && attachments[avatarFileName]) {
+    const avatarAttachment = attachments[avatarFileName];
+    const blob = avatarAttachment.data;
+
+    if (blob instanceof Blob) {
+      // Verifica si ya existe una URL para este avatar
+      if (avatarUrls.has(docId)) {
+        return avatarUrls.get(docId)!;
+      }
+
+      const url = URL.createObjectURL(blob);
+      avatarUrls.set(docId, url);
+      return url;
+    }
+  }
+  return null;
+  };
+
+
   const fetchParticipants = async () => {
     if (!db) return;
 
@@ -48,18 +76,7 @@
 
           const searchTextTokens = doc.searchTextTokens || [];
 
-          let avatarUrl = null;
-          if (client) {
-            const avatarFileName = jsonData.image?.['#text'];
-            if (avatarFileName && doc._attachments && doc._attachments[avatarFileName]) {
-              const avatarAttachment = doc._attachments[avatarFileName];
-
-              if (avatarAttachment && avatarAttachment.data instanceof Blob) {
-                avatarUrl = URL.createObjectURL(avatarAttachment.data);
-                avatarUrls.set(doc._id, avatarUrl);
-              }
-            }
-          }
+          const avatarUrl = generateAvatarUrl(jsonData, doc._id, doc._attachments);
 
           return { ...doc, jsonData, avatarUrl, searchTextTokens };
         })
@@ -114,57 +131,74 @@
   }
 
   const searchParticipants = async (): Promise<Participant[]> => {
-    if (!db) return [];
+  if (!db) return [];
 
-    if (!searchTerm.trim()) {
-      return participants;
-    }
+  if (!searchTerm.trim()) {
+    return participants;
+  }
 
-    const lowerCaseTerm = searchTerm.toLowerCase();
-    const tokens = lowerCaseTerm.split(',').map(token => token.trim()).filter(token => token);
+  const lowerCaseTerm = searchTerm.toLowerCase();
+  const tokens = lowerCaseTerm.split(',').map(token => token.trim()).filter(token => token);
 
-    const selector = {
-      $and: tokens.map((token) => ({
-        searchTextTokens: { $elemMatch: { $regex: token } },
-      })),
-    };
+  const selector = {
+    $and: tokens.map((token) => ({
+      searchTextTokens: { $elemMatch: { $regex: token } },
+    })),
+  };
 
-    try {
-      const result = await db.find({
-        selector,
-        fields: ['_id', 'jsonData', 'searchTextTokens', '_attachments'],
-      });
+  try {
+    // Paso 1: Realizar la búsqueda para obtener los IDs
+    const result = await db.find({
+      selector,
+      fields: ['_id'], // Solo necesitamos los IDs
+    });
 
-      const participantData = await Promise.all(
-        result.docs.map(async (doc: any) => {
-          const jsonDataKey = Object.keys(doc.jsonData)[0];
-          const jsonData = doc.jsonData[jsonDataKey];
+    const ids: string[] = result.docs.map((doc: any) => doc._id);
 
-          const searchTextTokens = doc.searchTextTokens || [];
-
-          let avatarUrl = null;
-          if (client) {
-            const avatarFileName = jsonData.image?.['#text'];
-            if (avatarFileName && doc._attachments && doc._attachments[avatarFileName]) {
-              const avatarAttachment = doc._attachments[avatarFileName];
-
-              if (avatarAttachment && avatarAttachment.data instanceof Blob) {
-                avatarUrl = URL.createObjectURL(avatarAttachment.data);
-                avatarUrls.set(doc._id, avatarUrl);
-              }
-            }
-          }
-
-          return { ...doc, jsonData, avatarUrl, searchTextTokens };
-        })
-      );
-
-      return participantData.filter((p): p is Participant => p !== null);
-    } catch (error) {
-      console.error('Error en searchParticipants:', error);
+    if (ids.length === 0) {
       return [];
     }
-  };
+
+    // Paso 2: Recuperar los documentos completos con adjuntos usando allDocs
+    const allDocsResult = await db.allDocs({
+      include_docs: true,
+      attachments: true,
+      binary: true,
+      keys: ids,
+    });
+
+    console.log('Resultados de búsqueda con adjuntos:', allDocsResult.rows);
+
+    const participantData: (Participant | null)[] = allDocsResult.rows.map((row: any) => {
+      const doc = row.doc;
+
+      if (!doc || !doc.jsonData || Object.keys(doc.jsonData).length === 0) {
+        console.warn(`Documento ${doc?._id} no tiene jsonData o está vacío`);
+        return null;
+      }
+
+      const jsonDataKey = Object.keys(doc.jsonData)[0];
+      const jsonData = doc.jsonData[jsonDataKey];
+
+      const searchTextTokens = doc.searchTextTokens || [];
+
+      console.log(`Procesando documento: ${doc._id}`);
+      console.log('Adjuntos:', doc._attachments);
+
+      const avatarUrl = generateAvatarUrl(jsonData, doc._id, doc._attachments);
+
+      console.log(`URL del avatar para ${doc._id}:`, avatarUrl);
+
+      return { ...doc, jsonData, avatarUrl, searchTextTokens };
+    });
+
+    return participantData.filter((p: Participant | null): p is Participant => p !== null);
+  } catch (error) {
+    console.error('Error en searchParticipants:', error);
+    return [];
+  }
+};
+
 
   onMount(async () => {
     client = true;
@@ -261,11 +295,6 @@
     {/if}
   </div>
 </div>
-
-
-
-
-
 
 <style>
   .container {
