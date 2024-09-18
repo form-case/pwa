@@ -1,56 +1,41 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
-  let PouchDB;
-  
-  interface Participant {
-    _id: string;
-    name?: string;
-    jsonData: Record<string, any>;
-    avatarUrl?: string;
-    searchTextTokens: string[];
-  }
+  import { participantsStore, filteredParticipantsStore, loadingStore } from '../../stores/participantsStore';
+  import type { Participant, Field } from '../../types';
+  import { get } from 'svelte/store';
 
-  interface Field {
-    label: string;
-    value: any;
-    hxl: string;
-  }
-
-  let participants: Participant[] = [];
-  let allDocuments: any[] = [];
-  let filteredParticipants: Participant[] = [];
-  let searchTerm = '';
-  let loading = true;
+  let PouchDB: any;
   let db: any;
   let client = false; // Bandera para saber si estamos en el cliente
+  let debounce: any;
 
-  interface Row {
-    doc: {
-      _id: string;
-      jsonData: Record<string, any>;
-      searchTextTokens: string[];
-      _attachments?: {
-        [filename: string]: {
-          content_type: string;
-          data: Blob;
-        };
-      };
-    };
-  }
+  let participants: Participant[] = [];
+  participantsStore.subscribe(value => participants = value);
+
+  let filteredParticipants: Participant[] = [];
+  filteredParticipantsStore.subscribe(value => filteredParticipants = value);
+
+  let loading: boolean = true;
+  loadingStore.subscribe(value => loading = value);
+
+  let searchTerm = '';
+
+  let allDocuments: any[] = [];
+  const avatarUrls = new Map<string, string>();
 
   const fetchParticipants = async () => {
-    if (!db) return; // Evitar ejecución si db no está inicializado
+    if (!db) return;
 
     try {
-      loading = true;
+      loadingStore.set(true);
       console.log('Iniciando fetch de participantes desde PouchDB...');
 
       const allDocs = await db.allDocs({ include_docs: true, attachments: true, binary: true });
       console.log(`Total de documentos obtenidos: ${allDocs.rows.length}`);
 
       const participantData = await Promise.all(
-        allDocs.rows.map(async (row: Row) => {
+        allDocs.rows.map(async (row: any) => {
           const doc = row.doc;
 
           if (!doc.jsonData || Object.keys(doc.jsonData).length === 0) {
@@ -61,18 +46,18 @@
           const jsonDataKey = Object.keys(doc.jsonData)[0];
           const jsonData = doc.jsonData[jsonDataKey];
 
-          // Asegurarnos de que searchTextTokens existe
           const searchTextTokens = doc.searchTextTokens || [];
 
-          // Procesar otros datos necesarios, como avatarUrl y cualquier otro campo
-          const avatarFileName = jsonData.image?.['#text'];
           let avatarUrl = null;
+          if (client) {
+            const avatarFileName = jsonData.image?.['#text'];
+            if (avatarFileName && doc._attachments && doc._attachments[avatarFileName]) {
+              const avatarAttachment = doc._attachments[avatarFileName];
 
-          if (avatarFileName && doc._attachments && doc._attachments[avatarFileName]) {
-            const avatarAttachment = doc._attachments[avatarFileName];
-
-            if (avatarAttachment && avatarAttachment.data instanceof Blob) {
-              avatarUrl = URL.createObjectURL(avatarAttachment.data);
+              if (avatarAttachment && avatarAttachment.data instanceof Blob) {
+                avatarUrl = URL.createObjectURL(avatarAttachment.data);
+                avatarUrls.set(doc._id, avatarUrl);
+              }
             }
           }
 
@@ -81,53 +66,140 @@
       );
 
       participants = participantData.filter((p): p is Participant => p !== null);
-      allDocuments = allDocs.rows.map((row: Row) => row.doc);
       console.log('Participantes procesados:', participants);
 
-      // Actualizar los participantes filtrados inicialmente
-      filteredParticipants = participants;
+      participantsStore.set(participants);
+      filteredParticipantsStore.set(participants);
+
+      allDocuments = allDocs.rows.map((row: any) => row.doc);
+    } catch (error) {
+      console.error('Error en fetchParticipants:', error);
     } finally {
-      loading = false;
-      console.log('Fetch completado.');
+      loadingStore.set(false);
     }
   };
 
-  const searchParticipants = (): Participant[] => {
+  const createIndex = async () => {
+    if (!db) return;
+    try {
+      await db.createIndex({
+        index: { fields: ['searchTextTokens'] },
+      });
+      console.log('Índice creado en searchTextTokens.');
+    } catch (error) {
+      console.error('Error al crear el índice:', error);
+    }
+  };
+
+  const listIndexes = async () => {
+    if (!db) return;
+    try {
+      const result = await db.getIndexes();
+      console.log('Índices existentes:', result.indexes);
+    } catch (error) {
+      console.error('Error al listar los índices:', error);
+    }
+  };
+
+  let debouncedSearchParticipants: () => void;
+
+  $: if (client && typeof searchTerm === 'string') {
+    if (!debouncedSearchParticipants && debounce) {
+      debouncedSearchParticipants = debounce(async () => {
+        const results = await searchParticipants();
+        filteredParticipantsStore.set(results);
+      }, 300);
+    }
+    debouncedSearchParticipants && debouncedSearchParticipants();
+  }
+
+  const searchParticipants = async (): Promise<Participant[]> => {
+    if (!db) return [];
+
     if (!searchTerm.trim()) {
       return participants;
     }
 
     const lowerCaseTerm = searchTerm.toLowerCase();
-    const tokens = lowerCaseTerm.split(/\s+/);
+    const tokens = lowerCaseTerm.split(',').map(token => token.trim()).filter(token => token);
 
-    return participants.filter(participant =>
-      tokens.every(token =>
-        participant.searchTextTokens.some(t => t.toLowerCase().includes(token))
-      )
-    );
+    const selector = {
+      $and: tokens.map((token) => ({
+        searchTextTokens: { $elemMatch: { $regex: token } },
+      })),
+    };
+
+    try {
+      const result = await db.find({
+        selector,
+        fields: ['_id', 'jsonData', 'searchTextTokens', '_attachments'],
+      });
+
+      const participantData = await Promise.all(
+        result.docs.map(async (doc: any) => {
+          const jsonDataKey = Object.keys(doc.jsonData)[0];
+          const jsonData = doc.jsonData[jsonDataKey];
+
+          const searchTextTokens = doc.searchTextTokens || [];
+
+          let avatarUrl = null;
+          if (client) {
+            const avatarFileName = jsonData.image?.['#text'];
+            if (avatarFileName && doc._attachments && doc._attachments[avatarFileName]) {
+              const avatarAttachment = doc._attachments[avatarFileName];
+
+              if (avatarAttachment && avatarAttachment.data instanceof Blob) {
+                avatarUrl = URL.createObjectURL(avatarAttachment.data);
+                avatarUrls.set(doc._id, avatarUrl);
+              }
+            }
+          }
+
+          return { ...doc, jsonData, avatarUrl, searchTextTokens };
+        })
+      );
+
+      return participantData.filter((p): p is Participant => p !== null);
+    } catch (error) {
+      console.error('Error en searchParticipants:', error);
+      return [];
+    }
   };
 
-  $: if (client && typeof searchTerm === 'string') {
-    filteredParticipants = searchParticipants();
-  }
-
   onMount(async () => {
-    client = true; // Estamos en el cliente
+    client = true;
 
+    // Importaciones dinámicas dentro de onMount
     const { default: PouchDBLib } = await import('pouchdb-browser');
+    const PouchFindModule = await import('pouchdb-find');
+    ({ debounce } = await import('lodash-es'));
+
+    const PouchFind = PouchFindModule.default || PouchFindModule;
+
+    // Aplicar el plugin a PouchDB
+    PouchDBLib.plugin(PouchFind);
+
     db = new PouchDBLib('enketodb');
     console.log('PouchDB inicializado...');
 
+    await createIndex();
+    await listIndexes();
     await fetchParticipants();
   });
 
-  const getFieldsWithHXL = (data: Record<string, any>, fields: Field[] = []): Field[] => {
+  onDestroy(() => {
+    avatarUrls.forEach((url) => URL.revokeObjectURL(url));
+    avatarUrls.clear();
+  });
+
+  const getFieldsWithHXL = (data: Record<string, unknown>, fields: Field[] = []): Field[] => {
     for (let key in data) {
       if (typeof data[key] === 'object' && !Array.isArray(data[key])) {
-        if ('@_hxl' in data[key] && '#text' in data[key]) {
-          fields.push({ label: key, value: data[key]['#text'], hxl: data[key]['@_hxl'] });
+        const field = data[key] as Record<string, unknown>;
+        if ('@_hxl' in field && '#text' in field) {
+          fields.push({ label: key, value: field['#text'], hxl: field['@_hxl'] as string });
         } else {
-          getFieldsWithHXL(data[key], fields);
+          getFieldsWithHXL(field, fields);
         }
       }
     }
@@ -143,7 +215,7 @@
 
     return fields
       .map(field => `<span class="field"><strong>${field.label}:</strong> ${field.value || 'No disponible'}</span>`)
-      .join('<hr class="divider" />'); // Añadir líneas divisorias entre los campos
+      .join('<hr class="divider" />');
   };
 
   const handleSelectParticipant = (participant: Participant) => {
@@ -157,9 +229,41 @@
   };
 </script>
 
-<!-- Tu código HTML y estilos permanecen igual -->
 
-<!-- Ajusta el #each para usar filteredParticipants -->
+<div class="container">
+  <div class="fixedTop">
+    <input
+      type="text"
+      bind:value={searchTerm}
+      placeholder="Buscar Participante (separa términos con comas)"
+      class="searchStyle"
+    />
+    <button class="add-participant" on:click={handleAddParticipant}>+</button>
+  </div>
+
+  <div class="content">
+    {#if loading}
+      <p>Cargando...</p>
+    {:else}
+      {#each filteredParticipants as participant}
+        <button
+          class="cardStyle"
+          on:click={() => handleSelectParticipant(participant)}
+          aria-label="Seleccionar participante"
+          type="button"
+        >
+          <img src={participant.avatarUrl || '/default-avatar.png'} alt="avatar" class="avatarStyle" loading="lazy" />
+          <div>
+            {@html renderParticipantFields(participant)}
+          </div>
+        </button>
+      {/each}
+    {/if}
+  </div>
+</div>
+
+
+
 
 
 
@@ -266,37 +370,6 @@
 
 </style>
 
-<div class="container">
-  <div class="fixedTop">
-    <input
-      type="text"
-      bind:value={searchTerm}
-      placeholder="Buscar Participante"
-      class="searchStyle"
-    />
-    <button class="add-participant" on:click={handleAddParticipant}>+</button>
-  </div>
-
-  <div class="content">
-    {#if loading}
-      <p>Cargando...</p>
-    {:else}
-      {#each filteredParticipants as participant}
-        <button
-          class="cardStyle"
-          on:click={() => handleSelectParticipant(participant)}
-          aria-label="Seleccionar participante"
-          type="button"
-        >
-          <img src={participant.avatarUrl || '/default-avatar.png'} alt="avatar" class="avatarStyle" />
-          <div>
-            {@html renderParticipantFields(participant)}
-          </div>
-        </button>
-      {/each}
-    {/if}
-  </div>
-</div>
 
 <div class="all-documents">
   <h3>Todos los Documentos en PouchDB</h3>
