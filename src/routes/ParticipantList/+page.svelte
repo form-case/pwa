@@ -1,9 +1,12 @@
+<!-- src\routes\ParticipantList\+page.svelte -->
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
   import { participantsStore, filteredParticipantsStore, loadingStore } from '../../stores/participantsStore';
+  import { selectedParticipantStore } from '../../stores/selectedParticipantStore';
   import type { Participant, Field } from '../../types';
   import { get } from 'svelte/store';
+  import { generateAvatarUrl, revokeAllAvatarUrls } from '../../utils/avatar';
 
   let PouchDB: any;
   let db: any;
@@ -25,31 +28,6 @@
   const avatarUrls = new Map<string, string>();
 
 
-  const generateAvatarUrl = (
-  jsonData: any,
-  docId: string,
-  attachments: any
-  ): string | null => {
-  if (!client) return null;
-
-  const avatarFileName = jsonData.image?.['#text'];
-  if (avatarFileName && attachments && attachments[avatarFileName]) {
-    const avatarAttachment = attachments[avatarFileName];
-    const blob = avatarAttachment.data;
-
-    if (blob instanceof Blob) {
-      // Verifica si ya existe una URL para este avatar
-      if (avatarUrls.has(docId)) {
-        return avatarUrls.get(docId)!;
-      }
-
-      const url = URL.createObjectURL(blob);
-      avatarUrls.set(docId, url);
-      return url;
-    }
-  }
-  return null;
-  };
 
 
   const fetchParticipants = async () => {
@@ -76,7 +54,7 @@
 
           const searchTextTokens = doc.searchTextTokens || [];
 
-          const avatarUrl = generateAvatarUrl(jsonData, doc._id, doc._attachments);
+          const avatarUrl = generateAvatarUrl(jsonData, doc._id, doc._attachments, client);
 
           return { ...doc, jsonData, avatarUrl, searchTextTokens };
         })
@@ -185,7 +163,7 @@
       console.log(`Procesando documento: ${doc._id}`);
       console.log('Adjuntos:', doc._attachments);
 
-      const avatarUrl = generateAvatarUrl(jsonData, doc._id, doc._attachments);
+      const avatarUrl = generateAvatarUrl(jsonData, doc._id, doc._attachments, client);
 
       console.log(`URL del avatar para ${doc._id}:`, avatarUrl);
 
@@ -222,9 +200,9 @@
   });
 
   onDestroy(() => {
-    avatarUrls.forEach((url) => URL.revokeObjectURL(url));
-    avatarUrls.clear();
+  revokeAllAvatarUrls();
   });
+
 
   const getFieldsWithHXL = (data: Record<string, unknown>, fields: Field[] = []): Field[] => {
     for (let key in data) {
@@ -254,7 +232,9 @@
 
   const handleSelectParticipant = (participant: Participant) => {
     console.log('Participante seleccionado:', participant._id);
-    goto(`/participant/${participant._id}`);
+    selectedParticipantStore.set(participant);
+    //goto(`/participant/${participant._id}`);
+    goto(`/participantdetails`);
   };
 
   const handleAddParticipant = () => {
