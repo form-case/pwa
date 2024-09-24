@@ -200,7 +200,7 @@
   });
 
   onDestroy(() => {
-  revokeAllAvatarUrls();
+  //revokeAllAvatarUrls();
   });
 
 

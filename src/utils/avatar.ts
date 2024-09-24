@@ -43,6 +43,18 @@ export function generateAvatarUrl(
 }
 
 /**
+ * Revoca la URL de un avatar específico y lo elimina del mapa.
+ * @param docId ID del documento del participante.
+ */
+export function revokeAvatarUrl(docId: string): void {
+  const url = avatarUrls.get(docId);
+  if (url) {
+    URL.revokeObjectURL(url);
+    avatarUrls.delete(docId);
+  }
+}
+
+/**
  * Revoca todas las URLs de avatares creadas y limpia el mapa.
  */
 export function revokeAllAvatarUrls(): void {

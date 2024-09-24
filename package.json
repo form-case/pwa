@@ -4,6 +4,7 @@
 	"scripts": {
 		"dev": "vite dev",
 		"build": "vite build",
+		"generate-sw": "workbox generateSW workbox-config.cjs",
 		"preview": "vite preview",
 		"test": "npm run test:integration && npm run test:unit",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
@@ -11,7 +12,8 @@
 		"lint": "prettier --check . && eslint .",
 		"format": "prettier --write .",
 		"test:integration": "playwright test",
-		"test:unit": "vitest"
+		"test:unit": "vitest",
+		"deploy": "npm run build && npm run generate-sw && firebase deploy"
 	},
 	"devDependencies": {
 		"@fontsource/fira-mono": "^5.0.0",
@@ -42,9 +44,12 @@
 		"vitest": "^2.0.0",
 		"workbox-cli": "^7.1.0"
 	},
-	"type": "module",
 	"dependencies": {
+		"@smui/button": "^7.0.0",
+		"@smui/form-field": "^7.0.0",
+		"@smui/textfield": "^7.0.0",
 		"events": "^3.3.0",
+		"firebase": "^10.13.2",
 		"latest-version": "^9.0.0",
 		"lodash": "^4.17.21",
 		"lodash-es": "^4.17.21",
@@ -57,5 +62,6 @@
 	},
 	"overrides": {
 		"got": "^11.8.5"
-	}
+	},
+	"type": "module"
 }
