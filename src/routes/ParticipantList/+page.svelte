@@ -234,7 +234,7 @@
     console.log('Participante seleccionado:', participant._id);
     selectedParticipantStore.set(participant);
     //goto(`/participant/${participant._id}`);
-    goto(`/participantdetails`);
+    goto(`/Participant`);
   };
 
   const handleAddParticipant = () => {
